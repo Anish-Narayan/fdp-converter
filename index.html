@@ -10,9 +10,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   
-  <!-- PDF Engine Libraries (CDNs) -->
+  <!-- PDF Engine Libraries with CDN Fallback -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://unpkg.com/pdf-lib@1.17.9/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <script>
+    // Failover if cdnjs is blocked or unreachable
+    if (typeof PDFLib === 'undefined') {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"><\/script>');
+    }
+  </script>
 
   <style>
     :root {
@@ -21,15 +27,12 @@
       --surface-elevated: #161f33;
       --surface-hover: #1c2740;
       --border: rgba(255, 255, 255, 0.08);
-      --border-focus: rgba(99, 102, 241, 0.5);
       
       --primary: #6366f1;
       --primary-hover: #4f46e5;
       --primary-glow: rgba(99, 102, 241, 0.25);
       --success: #10b981;
       --success-glow: rgba(16, 185, 129, 0.2);
-      --danger: #f43f5e;
-      --warning: #f59e0b;
 
       --text: #f8fafc;
       --text-secondary: #94a3b8;
@@ -62,7 +65,6 @@
       line-height: 1.5;
     }
 
-    /* Container Header */
     header {
       max-width: 1360px;
       width: 100%;
@@ -125,7 +127,6 @@
       box-shadow: 0 0 8px #818cf8;
     }
 
-    /* Grid Layout */
     .app-layout {
       max-width: 1360px;
       width: 100%;
@@ -143,7 +144,6 @@
       }
     }
 
-    /* Cards */
     .panel-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -165,7 +165,6 @@
       color: var(--text);
     }
 
-    /* Upload Area */
     .drop-zone {
       position: relative;
       border: 2px dashed rgba(99, 102, 241, 0.35);
@@ -254,7 +253,6 @@
       background: rgba(255, 255, 255, 0.08);
     }
 
-    /* Form Fields */
     .field-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -324,7 +322,6 @@
       border-radius: 999px;
     }
 
-    /* Details Accordion */
     details {
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
@@ -371,7 +368,6 @@
       gap: 14px;
     }
 
-    /* Modern Switch */
     .switch-row {
       display: flex;
       justify-content: space-between;
@@ -426,7 +422,6 @@
       background-color: #fff;
     }
 
-    /* Buttons */
     .btn-primary {
       background: var(--primary);
       color: #fff;
@@ -488,7 +483,6 @@
       border-color: rgba(255, 255, 255, 0.15);
     }
 
-    /* Progress Widget */
     .progress-wrapper {
       display: none;
       flex-direction: column;
@@ -518,7 +512,6 @@
       color: var(--text-secondary);
     }
 
-    /* Metrics Grid */
     .metric-row {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
@@ -550,7 +543,6 @@
       color: var(--text);
     }
 
-    /* Output Downloads */
     .download-strip {
       display: none;
       flex-direction: column;
@@ -572,7 +564,6 @@
       min-width: 130px;
     }
 
-    /* Tabs Header */
     .tab-nav {
       display: flex;
       gap: 4px;
@@ -600,7 +591,6 @@
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
     }
 
-    /* Terminal Console */
     .terminal-box {
       background: #06090e;
       border: 1px solid var(--border);
@@ -620,7 +610,6 @@
     .terminal-box .log-warn { color: #fbbf24; }
     .terminal-box .log-err { color: #f87171; }
 
-    /* Visual Inspector */
     .inspector-box {
       display: none;
       flex-direction: column;
@@ -680,7 +669,7 @@
         <p class="brand-subtitle">Sub-pixel anti-aliasing & transparent word rasterization</p>
       </div>
     </div>
-    <div class="badge-status">Engine Online</div>
+    <div class="badge-status">Engine Ready</div>
   </header>
 
   <div class="app-layout">
@@ -689,7 +678,7 @@
     <div class="panel-card">
       <div class="panel-title">
         <span>Document & Conversion</span>
-        <span style="font-size: 0.75rem; color: var(--text-tertiary);">Step 1 & 2</span>
+        <span style="font-size: 0.75rem; color: var(--text-tertiary);">Configuration</span>
       </div>
 
       <!-- File Dropzone -->
@@ -737,13 +726,12 @@
         <div class="field-col">
           <label>Quality DPI</label>
           <select id="targetDpi">
-            <option value="150">150 DPI</option>
-            <option value="300" selected>300 DPI</option>
-            <option value="450">450 DPI</option>
+            <option value="150">150 DPI (Fast)</option>
+            <option value="300" selected>300 DPI (High Res)</option>
+            <option value="450">450 DPI (Ultra)</option>
           </select>
         </div>
 
-        <!-- Random Pages Count Parameter -->
         <div class="field-col field-full">
           <label>
             Random Page Count
@@ -968,6 +956,36 @@
       terminalBox.scrollTop = terminalBox.scrollHeight;
     }
 
+    // Dynamic library loader fallback
+    async function ensurePDFLib() {
+      if (typeof PDFLib !== 'undefined' && window.PDFLib) return true;
+      log("PDFLib not found in cache. Loading backup CDN...", "warn");
+      
+      const backupCDNs = [
+        "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js",
+        "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"
+      ];
+
+      for (const url of backupCDNs) {
+        try {
+          await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = url;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+          });
+          if (typeof PDFLib !== 'undefined' && window.PDFLib) {
+            log("PDFLib library loaded successfully.", "success");
+            return true;
+          }
+        } catch (e) {
+          // try next
+        }
+      }
+      return false;
+    }
+
     // PRNG (Mulberry32)
     function createSeededRandom(seed) {
       let s = seed >>> 0;
@@ -1076,6 +1094,14 @@
     startBtn.addEventListener('click', async () => {
       if (!rawPdfBytes) return;
 
+      // Verify library availability
+      const libLoaded = await ensurePDFLib();
+      if (!libLoaded) {
+        log("Fatal: PDFLib could not be loaded. Please check your connection or disable script blockers.", "error");
+        alert("PDF-Lib engine could not be loaded from CDN. Please check your internet connection.");
+        return;
+      }
+
       startBtn.disabled = true;
       downloadStrip.style.display = 'none';
       candidateRecords = [];
@@ -1100,7 +1126,7 @@
         log(`Initiating transformation with seed = ${config.seed}...`);
         setProgress(5, "Resolving target pages...");
 
-        // 1. Identify target pages (with random page sampling if requested)
+        // 1. Target page identification
         const startP = Math.max(1, config.startPage);
         const endP = Math.min(totalDocPages, config.endPage);
         let eligiblePages = [];
@@ -1120,12 +1146,13 @@
           log(`Randomly picked ${targetPages.length} pages: [${targetPages.join(', ')}]`, "info");
         }
 
-        // 2. Extract word tokens
-        setProgress(20, "Extracting text tokens...");
+        // 2. Token Extraction
+        setProgress(15, `Extracting text across ${targetPages.length} pages...`);
         const candidates = [];
         const scale = config.targetDpi / 72.0;
 
-        for (const pageNum of targetPages) {
+        for (let pIdx = 0; pIdx < targetPages.length; pIdx++) {
+          const pageNum = targetPages[pIdx];
           const page = await pdfDocInstance.getPage(pageNum);
           const viewport = page.getViewport({ scale: 1.0 });
           const textContent = await page.getTextContent();
@@ -1174,11 +1201,15 @@
                 reason: ""
               };
 
-              // Rules
               filterCandidate(candidate, config);
               candidates.push(candidate);
               charOffset += wordText.length + 1;
             }
+          }
+          
+          if (pIdx % 5 === 0) {
+            setProgress(15 + Math.round((pIdx / targetPages.length) * 20));
+            await new Promise(r => setTimeout(r, 0)); // yield
           }
         }
 
@@ -1188,7 +1219,7 @@
         statEligible.textContent = eligibleList.length;
 
         // 3. Selection & Collision Resolution
-        setProgress(40, "Filtering & sampling...");
+        setProgress(38, "Applying probabilistic selection...");
         const selectRng = createSeededRandom(config.seed);
         const byPage = {};
         eligibleList.forEach(c => {
@@ -1229,7 +1260,7 @@
         log(`Selected ${selectedList.length} candidate words.`);
 
         if (config.dryRun) {
-          log("[DRY RUN] Finished without modifying PDF.", "warn");
+          log("[DRY RUN] Simulation finished without modifying PDF.", "warn");
           setProgress(100, "Simulation complete.");
           buildReport(config, candidates);
           downloadStrip.style.display = 'flex';
@@ -1238,7 +1269,7 @@
         }
 
         // 4. Transform (Rasterize & Embed)
-        setProgress(55, "Lossless sub-pixel rasterization...");
+        setProgress(50, "Lossless sub-pixel rasterization...");
         const pdfLibDoc = await PDFLib.PDFDocument.load(rawPdfBytes.slice());
         const selectedByPage = {};
         selectedList.forEach(c => {
@@ -1292,11 +1323,12 @@
             }
           }
           pagesDone++;
-          setProgress(55 + Math.round((pagesDone / totalPagesToRaster) * 40));
+          setProgress(50 + Math.round((pagesDone / totalPagesToRaster) * 45), `Processed page ${pageNum} (${pagesDone}/${totalPagesToRaster})...`);
+          await new Promise(r => setTimeout(r, 5)); // yield to UI
         }
 
-        // 5. Build Final Artifacts
-        setProgress(98, "Publishing PDF document...");
+        // 5. Finalize
+        setProgress(97, "Publishing output PDF...");
         convertedPdfBytes = await pdfLibDoc.save();
         buildReport(config, candidates);
 
@@ -1374,7 +1406,7 @@
       }
     }
 
-    // Download Actions
+    // Download Handlers
     downloadPdfBtn.addEventListener('click', () => {
       if (!convertedPdfBytes) return;
       const blob = new Blob([convertedPdfBytes], { type: 'application/pdf' });
