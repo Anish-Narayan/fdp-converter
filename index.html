@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PDF Selective Text-to-Image Converter</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- PDF Engine Libraries (CDNs) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://unpkg.com/pdf-lib@1.17.9/dist/pdf-lib.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #090d16;
+      --surface: #111726;
+      --surface-elevated: #161f33;
+      --surface-hover: #1c2740;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(99, 102, 241, 0.5);
+      
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --primary-glow: rgba(99, 102, 241, 0.25);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.2);
+      --danger: #f43f5e;
+      --warning: #f59e0b;
+
+      --text: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-tertiary: #64748b;
+
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: clamp(16px, 3vw, 32px);
+      background-image: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.12), transparent),
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(16, 185, 129, 0.06), transparent);
+      line-height: 1.5;
+    }
+
+    /* Container Header */
+    header {
+      max-width: 1360px;
+      width: 100%;
+      margin: 0 auto clamp(20px, 3vw, 32px);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-logo {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 20px var(--primary-glow);
+      flex-shrink: 0;
+    }
+
+    .brand-title {
+      font-size: clamp(1.15rem, 2vw, 1.35rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-subtitle {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 9999px;
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      color: #a5b4fc;
+    }
+
+    .badge-status::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #818cf8;
+      box-shadow: 0 0 8px #818cf8;
+    }
+
+    /* Grid Layout */
+    .app-layout {
+      max-width: 1360px;
+      width: 100%;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(340px, 440px) 1fr;
+      gap: clamp(16px, 2.5vw, 28px);
+      align-items: start;
+      flex: 1;
+    }
+
+    @media (max-width: 1024px) {
+      .app-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Cards */
+    .panel-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: clamp(18px, 2.5vw, 24px);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(16px);
+    }
+
+    .panel-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text);
+    }
+
+    /* Upload Area */
+    .drop-zone {
+      position: relative;
+      border: 2px dashed rgba(99, 102, 241, 0.35);
+      border-radius: var(--radius-md);
+      padding: 30px 20px;
+      text-align: center;
+      cursor: pointer;
+      background: rgba(17, 23, 38, 0.5);
+      transition: var(--transition);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .drop-zone:hover, .drop-zone.active {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.08);
+      transform: scale(1.005);
+    }
+
+    .drop-zone-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(99, 102, 241, 0.12);
+      color: #818cf8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 2px;
+    }
+
+    .file-pill {
+      display: none;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .file-details {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .file-icon {
+      color: #f43f5e;
+      flex-shrink: 0;
+    }
+
+    .file-name {
+      font-size: 0.88rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 220px;
+    }
+
+    .file-meta {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    .btn-icon-clear {
+      background: transparent;
+      border: none;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      padding: 6px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition);
+    }
+
+    .btn-icon-clear:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    /* Form Fields */
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+
+    @media (max-width: 480px) {
+      .field-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .field-col {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field-full {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .badge-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: #a5b4fc;
+      background: rgba(99, 102, 241, 0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      padding: 9px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      outline: none;
+      transition: var(--transition);
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--primary);
+      cursor: pointer;
+      height: 6px;
+      background: var(--surface-elevated);
+      border-radius: 999px;
+    }
+
+    /* Details Accordion */
+    details {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: rgba(17, 23, 38, 0.3);
+      overflow: hidden;
+      transition: var(--transition);
+    }
+
+    details summary {
+      padding: 12px 14px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      list-style: none;
+    }
+
+    details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details summary::after {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-right: 2px solid var(--text-tertiary);
+      border-bottom: 2px solid var(--text-tertiary);
+      transform: rotate(45deg);
+      transition: var(--transition);
+    }
+
+    details[open] summary::after {
+      transform: rotate(-135deg);
+    }
+
+    .details-content {
+      padding: 0 14px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Modern Switch */
+    .switch-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 38px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: var(--surface-elevated);
+      border: 1px solid var(--border);
+      transition: var(--transition);
+      border-radius: 9999px;
+    }
+
+    .slider::before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: var(--text-tertiary);
+      transition: var(--transition);
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    input:checked + .slider::before {
+      transform: translateX(16px);
+      background-color: #fff;
+    }
+
+    /* Buttons */
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.9rem;
+      padding: 13px 20px;
+      border-radius: var(--radius-md);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 4px 14px var(--primary-glow);
+      transition: var(--transition);
+      width: 100%;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: #fff;
+      box-shadow: 0 4px 14px var(--success-glow);
+    }
+
+    .btn-success:hover:not(:disabled) {
+      background: #059669;
+    }
+
+    .btn-subtle {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: var(--transition);
+    }
+
+    .btn-subtle:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--surface-hover);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Progress Widget */
+    .progress-wrapper {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .progress-track {
+      height: 6px;
+      border-radius: 999px;
+      background: var(--surface-elevated);
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--primary), var(--success));
+      border-radius: 999px;
+      transition: width 0.2s ease;
+    }
+
+    .progress-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-secondary);
+    }
+
+    /* Metrics Grid */
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+      gap: 10px;
+    }
+
+    .metric-card {
+      background: rgba(17, 23, 38, 0.4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .metric-card span:first-child {
+      font-size: 0.72rem;
+      color: var(--text-tertiary);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .metric-card span:last-child {
+      font-size: 1.25rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text);
+    }
+
+    /* Output Downloads */
+    .download-strip {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: var(--radius-md);
+      padding: 16px;
+    }
+
+    .download-grid {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .download-grid .btn-subtle {
+      flex: 1;
+      min-width: 130px;
+    }
+
+    /* Tabs Header */
+    .tab-nav {
+      display: flex;
+      gap: 4px;
+      background: var(--surface-elevated);
+      padding: 4px;
+      border-radius: var(--radius-sm);
+      width: fit-content;
+    }
+
+    .tab-link {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .tab-link.active {
+      color: var(--text);
+      background: var(--surface);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Terminal Console */
+    .terminal-box {
+      background: #06090e;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      height: 380px;
+      overflow-y: auto;
+      padding: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      line-height: 1.6;
+      color: #94a3b8;
+    }
+
+    .terminal-box .time { color: var(--text-tertiary); }
+    .terminal-box .log-info { color: #60a5fa; }
+    .terminal-box .log-success { color: #34d399; }
+    .terminal-box .log-warn { color: #fbbf24; }
+    .terminal-box .log-err { color: #f87171; }
+
+    /* Visual Inspector */
+    .inspector-box {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .inspector-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 0.82rem;
+    }
+
+    .inspector-pagination {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .canvas-viewport {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      max-height: 520px;
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+      position: relative;
+    }
+
+    #previewCanvas {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-logo">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <path d="M9 13h6"/>
+          <path d="M9 17h3"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-title">PDF Text-to-Image Converter</h1>
+        <p class="brand-subtitle">Sub-pixel anti-aliasing & transparent word rasterization</p>
+      </div>
+    </div>
+    <div class="badge-status">Engine Online</div>
+  </header>
+
+  <div class="app-layout">
+    
+    <!-- LEFT PANEL: Config & Controls -->
+    <div class="panel-card">
+      <div class="panel-title">
+        <span>Document & Conversion</span>
+        <span style="font-size: 0.75rem; color: var(--text-tertiary);">Step 1 & 2</span>
+      </div>
+
+      <!-- File Dropzone -->
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-zone-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div>
+          <p style="font-size: 0.88rem; font-weight: 600;">Click or drag PDF here</p>
+          <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px;">Standard unencrypted PDF documents</p>
+        </div>
+        <input type="file" id="fileInput" accept="application/pdf" style="display: none;">
+      </div>
+
+      <!-- Loaded File Pill -->
+      <div class="file-pill" id="filePill">
+        <div class="file-details">
+          <svg class="file-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <div>
+            <div class="file-name" id="fileName">document.pdf</div>
+            <div class="file-meta" id="fileMeta">0 KB • 0 pages</div>
+          </div>
+        </div>
+        <button class="btn-icon-clear" id="clearFileBtn" title="Remove file">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Core Parameters -->
+      <div class="field-grid">
+        
+        <div class="field-col field-full">
+          <label>
+            Conversion Probability
+            <span class="badge-val" id="probBadge">20%</span>
+          </label>
+          <input type="range" id="probability" min="0" max="1" step="0.01" value="0.20">
+        </div>
+
+        <div class="field-col">
+          <label>PRNG Seed</label>
+          <input type="number" id="randomSeed" value="42">
+        </div>
+
+        <div class="field-col">
+          <label>Quality DPI</label>
+          <select id="targetDpi">
+            <option value="150">150 DPI</option>
+            <option value="300" selected>300 DPI</option>
+            <option value="450">450 DPI</option>
+          </select>
+        </div>
+
+        <!-- Random Pages Count Parameter -->
+        <div class="field-col field-full">
+          <label>
+            Random Page Count
+            <span style="font-size: 0.72rem; color: #818cf8;">Samples N random pages</span>
+          </label>
+          <input type="number" id="randomPages" placeholder="All eligible pages (default)" min="1">
+        </div>
+
+      </div>
+
+      <!-- Collapsible Advanced Settings -->
+      <details>
+        <summary>Advanced Filtering & Policy</summary>
+        <div class="details-content">
+          <div class="field-grid" style="margin-top: 10px;">
+            <div class="field-col">
+              <label>Start Page</label>
+              <input type="number" id="startPage" placeholder="1" min="1">
+            </div>
+            <div class="field-col">
+              <label>End Page</label>
+              <input type="number" id="endPage" placeholder="Auto" min="1">
+            </div>
+            <div class="field-col">
+              <label>Min Word Len</label>
+              <input type="number" id="minWordLen" value="2" min="1">
+            </div>
+            <div class="field-col">
+              <label>Max Word Len</label>
+              <input type="number" id="maxWordLen" value="30" min="1">
+            </div>
+            <div class="field-col">
+              <label>Overlap Policy</label>
+              <select id="overlapPolicy">
+                <option value="drop" selected>Drop Collision</option>
+                <option value="keep">Keep Both</option>
+              </select>
+            </div>
+            <div class="field-col">
+              <label>Max Per Page</label>
+              <input type="number" id="maxPerPage" placeholder="None" min="1">
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 6px;">
+            <div class="switch-row">
+              <span>Exclude Pure Numbers</span>
+              <label class="switch">
+                <input type="checkbox" id="excludeNumeric" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="switch-row">
+              <span>Exclude Punctuation Tokens</span>
+              <label class="switch">
+                <input type="checkbox" id="excludePunctuation" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="switch-row">
+              <span>Dry Run (Simulation Only)</span>
+              <label class="switch">
+                <input type="checkbox" id="dryRun">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Primary Action & Progress -->
+      <button class="btn-primary" id="startBtn" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Convert Document
+      </button>
+
+      <div class="progress-wrapper" id="progressWrapper">
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-info">
+          <span id="progressLabel">Initializing...</span>
+          <span id="progressValue">0%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: Stats, Preview, Outputs -->
+    <div class="panel-card">
+      <div class="panel-title">
+        <span>Execution Monitor & Review</span>
+        <div class="tab-nav">
+          <button class="tab-link active" id="tabTerminalBtn">Terminal</button>
+          <button class="tab-link" id="tabInspectorBtn">Preview</button>
+        </div>
+      </div>
+
+      <!-- Realtime Metric Badges -->
+      <div class="metric-row">
+        <div class="metric-card">
+          <span>Tokens Scanned</span>
+          <span id="statScanned">0</span>
+        </div>
+        <div class="metric-card">
+          <span>Eligible</span>
+          <span id="statEligible">0</span>
+        </div>
+        <div class="metric-card">
+          <span>Converted</span>
+          <span id="statConverted" style="color: #34d399;">0</span>
+        </div>
+      </div>
+
+      <!-- Completed Download Hub -->
+      <div class="download-strip" id="downloadStrip">
+        <button class="btn-primary btn-success" id="downloadPdfBtn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download Converted PDF
+        </button>
+        <div class="download-grid">
+          <button class="btn-subtle" id="downloadJsonBtn">Export JSON Audit</button>
+          <button class="btn-subtle" id="downloadCsvBtn">Export CSV Audit</button>
+        </div>
+      </div>
+
+      <!-- Tab View 1: Terminal Console -->
+      <div class="terminal-box" id="terminalBox">
+        <div><span class="time">[00:00:00]</span> <span class="log-info">Ready. Upload a PDF to begin conversion.</span></div>
+      </div>
+
+      <!-- Tab View 2: Visual Page Inspector -->
+      <div class="inspector-box" id="inspectorBox">
+        <div class="inspector-toolbar">
+          <div class="inspector-pagination">
+            <button class="btn-subtle" id="prevPageBtn" style="padding: 4px 10px;">←</button>
+            <span id="pageIndicator">Page 1 / 1</span>
+            <button class="btn-subtle" id="nextPageBtn" style="padding: 4px 10px;">→</button>
+          </div>
+          <div class="switch-row" style="gap: 8px;">
+            <span style="font-size: 0.78rem;">Highlight Rectangles</span>
+            <label class="switch">
+              <input type="checkbox" id="showBboxes" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="canvas-viewport">
+          <canvas id="previewCanvas"></canvas>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    // Worker initialization
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // State Variables
+    let rawPdfBytes = null;
+    let convertedPdfBytes = null;
+    let pdfDocInstance = null;
+    let totalDocPages = 0;
+    let currentFileName = "document.pdf";
+    let auditReportData = null;
+    let candidateRecords = [];
+    let previewPageNumber = 1;
+
+    // DOM Elements
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const filePill = document.getElementById('filePill');
+    const fileName = document.getElementById('fileName');
+    const fileMeta = document.getElementById('fileMeta');
+    const clearFileBtn = document.getElementById('clearFileBtn');
+    const startBtn = document.getElementById('startBtn');
+    const probInput = document.getElementById('probability');
+    const probBadge = document.getElementById('probBadge');
+    
+    const progressWrapper = document.getElementById('progressWrapper');
+    const progressFill = document.getElementById('progressFill');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressValue = document.getElementById('progressValue');
+    
+    const statScanned = document.getElementById('statScanned');
+    const statEligible = document.getElementById('statEligible');
+    const statConverted = document.getElementById('statConverted');
+
+    const downloadStrip = document.getElementById('downloadStrip');
+    const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+    const downloadJsonBtn = document.getElementById('downloadJsonBtn');
+    const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+
+    const tabTerminalBtn = document.getElementById('tabTerminalBtn');
+    const tabInspectorBtn = document.getElementById('tabInspectorBtn');
+    const terminalBox = document.getElementById('terminalBox');
+    const inspectorBox = document.getElementById('inspectorBox');
+
+    const prevPageBtn = document.getElementById('prevPageBtn');
+    const nextPageBtn = document.getElementById('nextPageBtn');
+    const pageIndicator = document.getElementById('pageIndicator');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const showBboxes = document.getElementById('showBboxes');
+
+    // Probability Slider Sync
+    probInput.addEventListener('input', () => {
+      probBadge.textContent = `${Math.round(probInput.value * 100)}%`;
+    });
+
+    // Logging helper
+    function log(msg, type = "info") {
+      const time = new Date().toTimeString().split(' ')[0];
+      const div = document.createElement('div');
+      let typeClass = "log-info";
+      if (type === "success") typeClass = "log-success";
+      if (type === "warn") typeClass = "log-warn";
+      if (type === "error") typeClass = "log-err";
+
+      div.innerHTML = `<span class="time">[${time}]</span> <span class="${typeClass}">${msg}</span>`;
+      terminalBox.appendChild(div);
+      terminalBox.scrollTop = terminalBox.scrollHeight;
+    }
+
+    // PRNG (Mulberry32)
+    function createSeededRandom(seed) {
+      let s = seed >>> 0;
+      return function() {
+        s |= 0; s = s + 0x6D2B79F5 | 0;
+        let t = Math.imul(s ^ s >>> 15, 1 | s);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+
+    // Drag & Drop
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('active'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('active'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('active');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length) handleFile(e.target.files[0]);
+    });
+
+    clearFileBtn.addEventListener('click', () => {
+      rawPdfBytes = null;
+      convertedPdfBytes = null;
+      pdfDocInstance = null;
+      filePill.style.display = 'none';
+      dropZone.style.display = 'flex';
+      startBtn.disabled = true;
+      downloadStrip.style.display = 'none';
+      log("Document removed.");
+    });
+
+    async function handleFile(file) {
+      if (file.type !== "application/pdf" && !file.name.endsWith('.pdf')) {
+        alert("Please upload a valid PDF document.");
+        return;
+      }
+      currentFileName = file.name;
+      const arrayBuffer = await file.arrayBuffer();
+      rawPdfBytes = new Uint8Array(arrayBuffer);
+
+      try {
+        log(`Inspecting PDF: ${file.name}...`);
+        pdfDocInstance = await pdfjsLib.getDocument({ data: rawPdfBytes.slice() }).promise;
+        totalDocPages = pdfDocInstance.numPages;
+
+        fileName.textContent = file.name;
+        fileMeta.textContent = `${(file.size / 1024).toFixed(1)} KB • ${totalDocPages} pages`;
+        dropZone.style.display = 'none';
+        filePill.style.display = 'flex';
+        startBtn.disabled = false;
+
+        document.getElementById('endPage').placeholder = totalDocPages;
+        log(`Loaded successfully: ${totalDocPages} total pages.`, "success");
+      } catch (err) {
+        log(`PDF load failed: ${err.message}`, "error");
+        alert("Could not open PDF file. It may be encrypted.");
+      }
+    }
+
+    // Tab switching
+    tabTerminalBtn.addEventListener('click', () => {
+      tabTerminalBtn.classList.add('active');
+      tabInspectorBtn.classList.remove('active');
+      terminalBox.style.display = 'block';
+      inspectorBox.style.display = 'none';
+    });
+
+    tabInspectorBtn.addEventListener('click', () => {
+      tabInspectorBtn.classList.add('active');
+      tabTerminalBtn.classList.remove('active');
+      terminalBox.style.display = 'none';
+      inspectorBox.style.display = 'flex';
+      renderPreviewPage(previewPageNumber);
+    });
+
+    prevPageBtn.addEventListener('click', () => {
+      if (previewPageNumber > 1) {
+        previewPageNumber--;
+        renderPreviewPage(previewPageNumber);
+      }
+    });
+
+    nextPageBtn.addEventListener('click', () => {
+      if (previewPageNumber < totalDocPages) {
+        previewPageNumber++;
+        renderPreviewPage(previewPageNumber);
+      }
+    });
+
+    showBboxes.addEventListener('change', () => renderPreviewPage(previewPageNumber));
+
+    function setProgress(pct, msg) {
+      progressWrapper.style.display = 'flex';
+      progressFill.style.width = `${pct}%`;
+      progressValue.textContent = `${Math.round(pct)}%`;
+      if (msg) progressLabel.textContent = msg;
+    }
+
+    // ============================================================
+    // PIPELINE EXECUTION
+    // ============================================================
+    startBtn.addEventListener('click', async () => {
+      if (!rawPdfBytes) return;
+
+      startBtn.disabled = true;
+      downloadStrip.style.display = 'none';
+      candidateRecords = [];
+
+      const config = {
+        probability: parseFloat(probInput.value),
+        seed: parseInt(document.getElementById('randomSeed').value) || 42,
+        targetDpi: parseInt(document.getElementById('targetDpi').value) || 300,
+        randomPages: parseInt(document.getElementById('randomPages').value) || null,
+        startPage: parseInt(document.getElementById('startPage').value) || 1,
+        endPage: parseInt(document.getElementById('endPage').value) || totalDocPages,
+        minWordLen: parseInt(document.getElementById('minWordLen').value) || 2,
+        maxWordLen: parseInt(document.getElementById('maxWordLen').value) || 30,
+        excludeNumeric: document.getElementById('excludeNumeric').checked,
+        excludePunctuation: document.getElementById('excludePunctuation').checked,
+        overlapPolicy: document.getElementById('overlapPolicy').value,
+        maxPerPage: parseInt(document.getElementById('maxPerPage').value) || null,
+        dryRun: document.getElementById('dryRun').checked,
+      };
+
+      try {
+        log(`Initiating transformation with seed = ${config.seed}...`);
+        setProgress(5, "Resolving target pages...");
+
+        // 1. Identify target pages (with random page sampling if requested)
+        const startP = Math.max(1, config.startPage);
+        const endP = Math.min(totalDocPages, config.endPage);
+        let eligiblePages = [];
+        for (let i = startP; i <= endP; i++) eligiblePages.push(i);
+
+        let targetPages = eligiblePages;
+        const rng = createSeededRandom(config.seed);
+
+        if (config.randomPages && config.randomPages > 0) {
+          const sampleSize = Math.min(config.randomPages, eligiblePages.length);
+          const pool = [...eligiblePages];
+          for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [pool[i], pool[j]] = [pool[j], pool[i]];
+          }
+          targetPages = pool.slice(0, sampleSize).sort((a, b) => a - b);
+          log(`Randomly picked ${targetPages.length} pages: [${targetPages.join(', ')}]`, "info");
+        }
+
+        // 2. Extract word tokens
+        setProgress(20, "Extracting text tokens...");
+        const candidates = [];
+        const scale = config.targetDpi / 72.0;
+
+        for (const pageNum of targetPages) {
+          const page = await pdfDocInstance.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 1.0 });
+          const textContent = await page.getTextContent();
+
+          let wordIdx = 0;
+          for (let i = 0; i < textContent.items.length; i++) {
+            const item = textContent.items[i];
+            const str = item.str ? item.str.trim() : "";
+            if (!str) continue;
+
+            const words = str.split(/\s+/);
+            const totalChars = str.length;
+            const avgCharWidth = totalChars > 0 ? item.width / totalChars : 0;
+            const fontHeight = Math.hypot(item.transform[2], item.transform[3]) || item.height || Math.abs(item.transform[0]);
+
+            let charOffset = 0;
+            for (const w of words) {
+              const wordText = w.trim();
+              if (!wordText) continue;
+
+              const wordWidth = wordText.length * avgCharWidth;
+              const wordX = item.transform[4] + (charOffset * avgCharWidth);
+              const wordY = item.transform[5];
+
+              const padX = Math.max(0.75, fontHeight * 0.08);
+              const padY = Math.max(0.50, fontHeight * 0.05);
+
+              const descender = fontHeight * 0.22;
+              const ascender = fontHeight * 0.88;
+              const pdfY0 = wordY - descender - padY;
+              const pdfY1 = wordY + ascender + padY;
+              const pdfX0 = wordX - padX;
+              const pdfX1 = wordX + wordWidth + padX;
+
+              const candidate = {
+                uid: `p${pageNum}_w${wordIdx++}`,
+                pageNumber: pageNum,
+                text: wordText,
+                pageHeight: viewport.height,
+                pdfRect: { x0: pdfX0, y0: pdfY0, x1: pdfX1, y1: pdfY1 },
+                width: pdfX1 - pdfX0,
+                height: pdfY1 - pdfY0,
+                isEligible: false,
+                isSelected: false,
+                status: "INITIALIZED",
+                reason: ""
+              };
+
+              // Rules
+              filterCandidate(candidate, config);
+              candidates.push(candidate);
+              charOffset += wordText.length + 1;
+            }
+          }
+        }
+
+        candidateRecords = candidates;
+        const eligibleList = candidates.filter(c => c.isEligible);
+        statScanned.textContent = candidates.length;
+        statEligible.textContent = eligibleList.length;
+
+        // 3. Selection & Collision Resolution
+        setProgress(40, "Filtering & sampling...");
+        const selectRng = createSeededRandom(config.seed);
+        const byPage = {};
+        eligibleList.forEach(c => {
+          (byPage[c.pageNumber] = byPage[c.pageNumber] || []).push(c);
+        });
+
+        for (const p in byPage) {
+          let pageCount = 0;
+          for (const c of byPage[p]) {
+            if (selectRng() < config.probability) {
+              if (config.maxPerPage && pageCount >= config.maxPerPage) {
+                c.status = "SKIPPED_CAP";
+                continue;
+              }
+              c.isSelected = true;
+              c.status = "SELECTED";
+              pageCount++;
+            }
+          }
+
+          if (config.overlapPolicy === "drop") {
+            const selected = byPage[p].filter(c => c.isSelected);
+            for (let i = 0; i < selected.length; i++) {
+              if (!selected[i].isSelected) continue;
+              for (let j = i + 1; j < selected.length; j++) {
+                if (!selected[j].isSelected) continue;
+                if (overlaps(selected[i].pdfRect, selected[j].pdfRect)) {
+                  selected[j].isSelected = false;
+                  selected[j].status = "SKIPPED_COLLISION";
+                }
+              }
+            }
+          }
+        }
+
+        const selectedList = candidates.filter(c => c.isSelected);
+        statConverted.textContent = selectedList.length;
+        log(`Selected ${selectedList.length} candidate words.`);
+
+        if (config.dryRun) {
+          log("[DRY RUN] Finished without modifying PDF.", "warn");
+          setProgress(100, "Simulation complete.");
+          buildReport(config, candidates);
+          downloadStrip.style.display = 'flex';
+          startBtn.disabled = false;
+          return;
+        }
+
+        // 4. Transform (Rasterize & Embed)
+        setProgress(55, "Lossless sub-pixel rasterization...");
+        const pdfLibDoc = await PDFLib.PDFDocument.load(rawPdfBytes.slice());
+        const selectedByPage = {};
+        selectedList.forEach(c => {
+          (selectedByPage[c.pageNumber] = selectedByPage[c.pageNumber] || []).push(c);
+        });
+
+        let pagesDone = 0;
+        const totalPagesToRaster = Object.keys(selectedByPage).length;
+
+        for (const pStr in selectedByPage) {
+          const pageNum = parseInt(pStr);
+          const page = await pdfDocInstance.getPage(pageNum);
+          const pdfLibPage = pdfLibDoc.getPage(pageNum - 1);
+          const viewport = page.getViewport({ scale: scale });
+
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+          for (const word of selectedByPage[pageNum]) {
+            try {
+              const cX = Math.max(0, Math.floor(word.pdfRect.x0 * scale));
+              const cY = Math.max(0, Math.floor((word.pageHeight - word.pdfRect.y1) * scale));
+              const cW = Math.min(canvas.width - cX, Math.ceil(word.width * scale));
+              const cH = Math.min(canvas.height - cY, Math.ceil(word.height * scale));
+
+              if (cW <= 0 || cH <= 0) continue;
+
+              const cropCanvas = document.createElement('canvas');
+              cropCanvas.width = cW;
+              cropCanvas.height = cH;
+              cropCanvas.getContext('2d').drawImage(canvas, cX, cY, cW, cH, 0, 0, cW, cH);
+
+              const blob = await new Promise(res => cropCanvas.toBlob(res, 'image/png'));
+              const pngBytes = await blob.arrayBuffer();
+              const embedded = await pdfLibDoc.embedPng(pngBytes);
+
+              pdfLibPage.drawImage(embedded, {
+                x: cX / scale,
+                y: word.pageHeight - ((cY + cH) / scale),
+                width: cW / scale,
+                height: cH / scale
+              });
+
+              word.status = "CONVERTED";
+            } catch (err) {
+              word.status = "FAILED";
+              log(`Word render failed: ${err.message}`, "error");
+            }
+          }
+          pagesDone++;
+          setProgress(55 + Math.round((pagesDone / totalPagesToRaster) * 40));
+        }
+
+        // 5. Build Final Artifacts
+        setProgress(98, "Publishing PDF document...");
+        convertedPdfBytes = await pdfLibDoc.save();
+        buildReport(config, candidates);
+
+        setProgress(100, "Completed");
+        log("Conversion pipeline finished successfully!", "success");
+        downloadStrip.style.display = 'flex';
+
+        previewPageNumber = targetPages[0] || 1;
+        renderPreviewPage(previewPageNumber);
+
+      } catch (err) {
+        log(`Execution error: ${err.message}`, "error");
+        console.error(err);
+      } finally {
+        startBtn.disabled = false;
+      }
+    });
+
+    function filterCandidate(c, config) {
+      const t = c.text;
+      if (t.length < config.minWordLen || t.length > config.maxWordLen) return;
+      if (config.excludeNumeric && /^\d+$/.test(t)) return;
+      if (config.excludePunctuation && !/[a-zA-Z0-9]/.test(t)) return;
+      if (/^[ivxlcdm]+$/i.test(t)) return;
+      c.isEligible = true;
+    }
+
+    function overlaps(r1, r2) {
+      return !(r2.x0 > r1.x1 || r2.x1 < r1.x0 || r2.y0 > r1.y1 || r2.y1 < r1.y0);
+    }
+
+    function buildReport(config, candidates) {
+      const converted = candidates.filter(c => c.status === "CONVERTED").length;
+      auditReportData = {
+        filename: currentFileName,
+        config: config,
+        totalExtracted: candidates.length,
+        totalConverted: converted,
+        records: candidates.map(c => ({
+          uid: c.uid,
+          page: c.pageNumber,
+          text: c.text,
+          status: c.status,
+          rect: [c.pdfRect.x0, c.pdfRect.y0, c.pdfRect.x1, c.pdfRect.y1]
+        }))
+      };
+    }
+
+    async function renderPreviewPage(pageNum) {
+      if (!pdfDocInstance) return;
+      pageIndicator.textContent = `Page ${pageNum} / ${totalDocPages}`;
+
+      const page = await pdfDocInstance.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 1.5 });
+
+      previewCanvas.width = viewport.width;
+      previewCanvas.height = viewport.height;
+      const ctx = previewCanvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+      if (showBboxes.checked && candidateRecords.length) {
+        const pageWords = candidateRecords.filter(c => c.pageNumber === pageNum && c.status === "CONVERTED");
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(99, 102, 241, 0.9)";
+        ctx.fillStyle = "rgba(99, 102, 241, 0.2)";
+
+        for (const w of pageWords) {
+          const vx = w.pdfRect.x0 * 1.5;
+          const vy = (w.pageHeight - w.pdfRect.y1) * 1.5;
+          const vw = w.width * 1.5;
+          const vh = w.height * 1.5;
+          ctx.fillRect(vx, vy, vw, vh);
+          ctx.strokeRect(vx, vy, vw, vh);
+        }
+      }
+    }
+
+    // Download Actions
+    downloadPdfBtn.addEventListener('click', () => {
+      if (!convertedPdfBytes) return;
+      const blob = new Blob([convertedPdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = currentFileName.replace(/\.pdf$/i, '') + "_converted.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    downloadJsonBtn.addEventListener('click', () => {
+      if (!auditReportData) return;
+      const blob = new Blob([JSON.stringify(auditReportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = currentFileName.replace(/\.pdf$/i, '') + "_audit.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    downloadCsvBtn.addEventListener('click', () => {
+      if (!auditReportData) return;
+      let csv = "UID,Page,Text,Status,X0,Y0,X1,Y1\n";
+      for (const r of auditReportData.records) {
+        csv += `${r.uid},${r.page},"${r.text.replace(/"/g, '""')}",${r.status},${r.rect[0].toFixed(2)},${r.rect[1].toFixed(2)},${r.rect[2].toFixed(2)},${r.rect[3].toFixed(2)}\n`;
+      }
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = currentFileName.replace(/\.pdf$/i, '') + "_audit.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
