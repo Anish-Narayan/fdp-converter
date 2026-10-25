@@ -10,11 +10,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   
-  <!-- PDF Engine Libraries with CDN Fallback -->
+  <!-- PDF Engine Libraries with CDN Fallbacks -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
   <script>
-    // Failover if cdnjs is blocked or unreachable
     if (typeof PDFLib === 'undefined') {
       document.write('<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"><\/script>');
     }
@@ -666,7 +665,7 @@
       </div>
       <div>
         <h1 class="brand-title">PDF Text-to-Image Converter</h1>
-        <p class="brand-subtitle">Sub-pixel anti-aliasing & transparent word rasterization</p>
+        <p class="brand-subtitle">True text-stripping rasterizer with selective OCR layer</p>
       </div>
     </div>
     <div class="badge-status">Engine Ready</div>
@@ -937,12 +936,10 @@
     const previewCanvas = document.getElementById('previewCanvas');
     const showBboxes = document.getElementById('showBboxes');
 
-    // Probability Slider Sync
     probInput.addEventListener('input', () => {
       probBadge.textContent = `${Math.round(probInput.value * 100)}%`;
     });
 
-    // Logging helper
     function log(msg, type = "info") {
       const time = new Date().toTimeString().split(' ')[0];
       const div = document.createElement('div');
@@ -956,16 +953,13 @@
       terminalBox.scrollTop = terminalBox.scrollHeight;
     }
 
-    // Dynamic library loader fallback
     async function ensurePDFLib() {
       if (typeof PDFLib !== 'undefined' && window.PDFLib) return true;
-      log("PDFLib not found in cache. Loading backup CDN...", "warn");
-      
+      log("Loading backup CDN for PDFLib...", "warn");
       const backupCDNs = [
         "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js",
         "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"
       ];
-
       for (const url of backupCDNs) {
         try {
           await new Promise((resolve, reject) => {
@@ -975,18 +969,12 @@
             script.onerror = reject;
             document.head.appendChild(script);
           });
-          if (typeof PDFLib !== 'undefined' && window.PDFLib) {
-            log("PDFLib library loaded successfully.", "success");
-            return true;
-          }
-        } catch (e) {
-          // try next
-        }
+          if (typeof PDFLib !== 'undefined' && window.PDFLib) return true;
+        } catch (e) {}
       }
       return false;
     }
 
-    // PRNG (Mulberry32)
     function createSeededRandom(seed) {
       let s = seed >>> 0;
       return function() {
@@ -997,7 +985,15 @@
       };
     }
 
-    // Drag & Drop
+    function sanitizeForWinAnsi(str) {
+      return str
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/[\u2026]/g, '...')
+        .replace(/[^\x00-\xFF]/g, ' ');
+    }
+
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('active'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('active'));
@@ -1049,7 +1045,6 @@
       }
     }
 
-    // Tab switching
     tabTerminalBtn.addEventListener('click', () => {
       tabTerminalBtn.classList.add('active');
       tabInspectorBtn.classList.remove('active');
@@ -1094,11 +1089,10 @@
     startBtn.addEventListener('click', async () => {
       if (!rawPdfBytes) return;
 
-      // Verify library availability
       const libLoaded = await ensurePDFLib();
       if (!libLoaded) {
-        log("Fatal: PDFLib could not be loaded. Please check your connection or disable script blockers.", "error");
-        alert("PDF-Lib engine could not be loaded from CDN. Please check your internet connection.");
+        log("Fatal: PDFLib could not be loaded.", "error");
+        alert("PDF-Lib engine failed to load. Please check your internet connection.");
         return;
       }
 
@@ -1126,7 +1120,7 @@
         log(`Initiating transformation with seed = ${config.seed}...`);
         setProgress(5, "Resolving target pages...");
 
-        // 1. Target page identification
+        // 1. Identify Target Pages
         const startP = Math.max(1, config.startPage);
         const endP = Math.min(totalDocPages, config.endPage);
         let eligiblePages = [];
@@ -1147,15 +1141,16 @@
         }
 
         // 2. Token Extraction
-        setProgress(15, `Extracting text across ${targetPages.length} pages...`);
+        setProgress(15, `Extracting text tokens...`);
         const candidates = [];
-        const scale = config.targetDpi / 72.0;
+        const wordsByPage = {};
 
         for (let pIdx = 0; pIdx < targetPages.length; pIdx++) {
           const pageNum = targetPages[pIdx];
           const page = await pdfDocInstance.getPage(pageNum);
           const viewport = page.getViewport({ scale: 1.0 });
           const textContent = await page.getTextContent();
+          wordsByPage[pageNum] = [];
 
           let wordIdx = 0;
           for (let i = 0; i < textContent.items.length; i++) {
@@ -1177,40 +1172,36 @@
               const wordX = item.transform[4] + (charOffset * avgCharWidth);
               const wordY = item.transform[5];
 
-              const padX = Math.max(0.75, fontHeight * 0.08);
-              const padY = Math.max(0.50, fontHeight * 0.05);
-
               const descender = fontHeight * 0.22;
               const ascender = fontHeight * 0.88;
-              const pdfY0 = wordY - descender - padY;
-              const pdfY1 = wordY + ascender + padY;
-              const pdfX0 = wordX - padX;
-              const pdfX1 = wordX + wordWidth + padX;
 
               const candidate = {
                 uid: `p${pageNum}_w${wordIdx++}`,
                 pageNumber: pageNum,
                 text: wordText,
                 pageHeight: viewport.height,
-                pdfRect: { x0: pdfX0, y0: pdfY0, x1: pdfX1, y1: pdfY1 },
-                width: pdfX1 - pdfX0,
-                height: pdfY1 - pdfY0,
+                pdfRect: { 
+                  x0: wordX, 
+                  y0: wordY - descender, 
+                  x1: wordX + wordWidth, 
+                  y1: wordY + ascender 
+                },
+                baselineY: wordY,
+                fontSize: fontHeight,
+                width: wordWidth,
+                height: ascender + descender,
                 isEligible: false,
                 isSelected: false,
-                status: "INITIALIZED",
-                reason: ""
+                status: "INITIALIZED"
               };
 
               filterCandidate(candidate, config);
               candidates.push(candidate);
+              wordsByPage[pageNum].push(candidate);
               charOffset += wordText.length + 1;
             }
           }
-          
-          if (pIdx % 5 === 0) {
-            setProgress(15 + Math.round((pIdx / targetPages.length) * 20));
-            await new Promise(r => setTimeout(r, 0)); // yield
-          }
+          if (pIdx % 5 === 0) await new Promise(r => setTimeout(r, 0));
         }
 
         candidateRecords = candidates;
@@ -1218,8 +1209,8 @@
         statScanned.textContent = candidates.length;
         statEligible.textContent = eligibleList.length;
 
-        // 3. Selection & Collision Resolution
-        setProgress(38, "Applying probabilistic selection...");
+        // 3. Probabilistic Selection & Collision Resolution
+        setProgress(35, "Filtering & sampling...");
         const selectRng = createSeededRandom(config.seed);
         const byPage = {};
         eligibleList.forEach(c => {
@@ -1257,10 +1248,10 @@
 
         const selectedList = candidates.filter(c => c.isSelected);
         statConverted.textContent = selectedList.length;
-        log(`Selected ${selectedList.length} candidate words.`);
+        log(`Confirmed ${selectedList.length} words for text-to-image conversion.`);
 
         if (config.dryRun) {
-          log("[DRY RUN] Simulation finished without modifying PDF.", "warn");
+          log("[DRY RUN] Finished without modifying PDF.", "warn");
           setProgress(100, "Simulation complete.");
           buildReport(config, candidates);
           downloadStrip.style.display = 'flex';
@@ -1268,72 +1259,89 @@
           return;
         }
 
-        // 4. Transform (Rasterize & Embed)
-        setProgress(50, "Lossless sub-pixel rasterization...");
-        const pdfLibDoc = await PDFLib.PDFDocument.load(rawPdfBytes.slice());
-        const selectedByPage = {};
-        selectedList.forEach(c => {
-          (selectedByPage[c.pageNumber] = selectedByPage[c.pageNumber] || []).push(c);
-        });
+        // 4. True Text-Stripping Pipeline
+        // Build a brand-new PDF:
+        // - Unaltered pages are copied as original vector
+        // - Converted pages are rasterized to high-res background, and only UNCONVERTED words get an invisible selectable text layer
+        setProgress(50, "Synthesizing non-selectable image layers...");
+        const srcDoc = await PDFLib.PDFDocument.load(rawPdfBytes.slice());
+        const outDoc = await PDFLib.PDFDocument.create();
+        const helvetica = await outDoc.embedFont(PDFLib.StandardFonts.Helvetica);
 
-        let pagesDone = 0;
-        const totalPagesToRaster = Object.keys(selectedByPage).length;
+        const pagesWithConversions = new Set(selectedList.map(c => c.pageNumber));
+        const scale = config.targetDpi / 72.0;
 
-        for (const pStr in selectedByPage) {
-          const pageNum = parseInt(pStr);
-          const page = await pdfDocInstance.getPage(pageNum);
-          const pdfLibPage = pdfLibDoc.getPage(pageNum - 1);
-          const viewport = page.getViewport({ scale: scale });
+        for (let pNum = 1; pNum <= totalDocPages; pNum++) {
+          if (!pagesWithConversions.has(pNum)) {
+            // Unmodified page: copy directly from source (fast, 100% vector)
+            const [copiedPage] = await outDoc.copyPages(srcDoc, [pNum - 1]);
+            outDoc.addPage(copiedPage);
+          } else {
+            // Page HAS words converted to images:
+            // Step 4a: Render page to high-res canvas at target DPI
+            const page = await pdfDocInstance.getPage(pNum);
+            const viewport = page.getViewport({ scale: scale });
+            const pWidth = viewport.width / scale;
+            const pHeight = viewport.height / scale;
 
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.floor(viewport.width);
-          canvas.height = Math.floor(viewport.height);
-          const ctx = canvas.getContext('2d');
-          await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.floor(viewport.width);
+            canvas.height = Math.floor(viewport.height);
+            const ctx = canvas.getContext('2d');
+            await page.render({ canvasContext: ctx, viewport }).promise;
 
-          for (const word of selectedByPage[pageNum]) {
-            try {
-              const cX = Math.max(0, Math.floor(word.pdfRect.x0 * scale));
-              const cY = Math.max(0, Math.floor((word.pageHeight - word.pdfRect.y1) * scale));
-              const cW = Math.min(canvas.width - cX, Math.ceil(word.width * scale));
-              const cH = Math.min(canvas.height - cY, Math.ceil(word.height * scale));
+            // Step 4b: Compress canvas to JPEG image (lossless-equivalent 95% quality, fast)
+            const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.95));
+            const imgBytes = await blob.arrayBuffer();
+            const bgImage = await outDoc.embedJpg(imgBytes);
 
-              if (cW <= 0 || cH <= 0) continue;
+            // Step 4c: Add a brand new page with the image as background
+            const newPage = outDoc.addPage([pWidth, pHeight]);
+            newPage.drawImage(bgImage, {
+              x: 0,
+              y: 0,
+              width: pWidth,
+              height: pHeight
+            });
 
-              const cropCanvas = document.createElement('canvas');
-              cropCanvas.width = cW;
-              cropCanvas.height = cH;
-              cropCanvas.getContext('2d').drawImage(canvas, cX, cY, cW, cH, 0, 0, cW, cH);
-
-              const blob = await new Promise(res => cropCanvas.toBlob(res, 'image/png'));
-              const pngBytes = await blob.arrayBuffer();
-              const embedded = await pdfLibDoc.embedPng(pngBytes);
-
-              pdfLibPage.drawImage(embedded, {
-                x: cX / scale,
-                y: word.pageHeight - ((cY + cH) / scale),
-                width: cW / scale,
-                height: cH / scale
-              });
-
-              word.status = "CONVERTED";
-            } catch (err) {
-              word.status = "FAILED";
-              log(`Word render failed: ${err.message}`, "error");
+            // Step 4d: Selective Text Layer:
+            // Stamping invisible text ONLY for UNCONVERTED words.
+            // Converted words get NO text stamped, meaning they are strictly non-selectable!
+            const pageWords = wordsByPage[pNum] || [];
+            for (const word of pageWords) {
+              if (word.isSelected) {
+                word.status = "CONVERTED"; // Pure image, no text operator exists!
+              } else {
+                // Keep unconverted words selectable
+                try {
+                  const sanitized = sanitizeForWinAnsi(word.text);
+                  if (sanitized.trim().length > 0) {
+                    newPage.drawText(sanitized, {
+                      x: word.pdfRect.x0,
+                      y: word.baselineY,
+                      size: word.fontSize,
+                      font: helvetica,
+                      opacity: 0 // Invisible OCR layer for unconverted words
+                    });
+                  }
+                } catch (e) {
+                  // Ignore glyph encoding mismatches
+                }
+              }
             }
           }
-          pagesDone++;
-          setProgress(50 + Math.round((pagesDone / totalPagesToRaster) * 45), `Processed page ${pageNum} (${pagesDone}/${totalPagesToRaster})...`);
-          await new Promise(r => setTimeout(r, 5)); // yield to UI
+
+          setProgress(50 + Math.round((pNum / totalDocPages) * 45), `Processed Page ${pNum}/${totalDocPages}...`);
+          if (pNum % 3 === 0) await new Promise(r => setTimeout(r, 5));
         }
 
         // 5. Finalize
-        setProgress(97, "Publishing output PDF...");
-        convertedPdfBytes = await pdfLibDoc.save();
+        setProgress(98, "Publishing output PDF...");
+        convertedPdfBytes = await outDoc.save();
         buildReport(config, candidates);
 
         setProgress(100, "Completed");
-        log("Conversion pipeline finished successfully!", "success");
+        log("Conversion pipeline finished! Converted words are now pure images.", "success");
         downloadStrip.style.display = 'flex';
 
         previewPageNumber = targetPages[0] || 1;
@@ -1406,7 +1414,6 @@
       }
     }
 
-    // Download Handlers
     downloadPdfBtn.addEventListener('click', () => {
       if (!convertedPdfBytes) return;
       const blob = new Blob([convertedPdfBytes], { type: 'application/pdf' });
