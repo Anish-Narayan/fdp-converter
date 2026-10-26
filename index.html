@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   
-  <!-- PDF & DOCX Engine Libraries (CDNs) -->
+  <!-- CDNs: PDF.js, PDF-Lib, JSZip -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -556,11 +556,10 @@
       color: var(--text);
     }
 
-    /* Dual Main Download Strip */
     .download-strip {
       display: none;
       flex-direction: column;
-      gap: 12px;
+      gap: 14px;
       background: rgba(99, 102, 241, 0.08);
       border: 1px solid rgba(99, 102, 241, 0.25);
       border-radius: var(--radius-md);
@@ -570,7 +569,7 @@
     .download-primary-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      gap: 14px;
     }
 
     @media (max-width: 600px) {
@@ -692,7 +691,7 @@
       </div>
       <div>
         <h1 class="brand-title">PDF Text-to-Image Converter</h1>
-        <p class="brand-subtitle">Dual-Export Engine: Non-selectable PDF + True Flow Word (.docx)</p>
+        <p class="brand-subtitle">High-fidelity PDF and Natural-Flow Word (.docx) Engine</p>
       </div>
     </div>
     <div class="badge-status">Engine Ready</div>
@@ -1126,7 +1125,128 @@
     }
 
     // ============================================================
-    // CONVERSION PIPELINE (PDF + WORD DOCX)
+    // WORD REASSEMBLY: Reconstitutes whole words across kerning/fragments
+    // ============================================================
+    function reassembleWordsFromPage(items, viewport) {
+      if (!items || !items.length) return [];
+      
+      const charBoxes = [];
+      for (const item of items) {
+        const text = item.str;
+        if (!text) continue;
+        
+        const tx = item.transform;
+        const fontHeight = Math.hypot(tx[2], tx[3]) || item.height || Math.abs(tx[0]);
+        const startX = tx[4];
+        const baselineY = tx[5];
+        const totalW = item.width;
+        const charW = text.length > 0 ? (totalW / text.length) : 0;
+        
+        for (let cIdx = 0; cIdx < text.length; cIdx++) {
+          const ch = text[cIdx];
+          const x0 = startX + (cIdx * charW);
+          const x1 = x0 + charW;
+          charBoxes.push({
+            char: ch,
+            x0,
+            x1,
+            baselineY,
+            fontSize: fontHeight,
+            descender: fontHeight * 0.22,
+            ascender: fontHeight * 0.88,
+            pageWidth: viewport.width,
+            pageHeight: viewport.height
+          });
+        }
+      }
+
+      // Sort characters in reading order
+      charBoxes.sort((a, b) => {
+        if (Math.abs(b.baselineY - a.baselineY) > 3.0) {
+          return b.baselineY - a.baselineY;
+        }
+        return a.x0 - b.x0;
+      });
+
+      // Stitch adjacent characters into true, unbroken words
+      const words = [];
+      let curWord = null;
+
+      for (let i = 0; i < charBoxes.length; i++) {
+        const cb = charBoxes[i];
+        const isSpace = /\s/.test(cb.char);
+
+        if (!curWord) {
+          if (!isSpace) {
+            curWord = {
+              text: cb.char,
+              x0: cb.x0,
+              x1: cb.x1,
+              baselineY: cb.baselineY,
+              fontSize: cb.fontSize,
+              descender: cb.descender,
+              ascender: cb.ascender,
+              pageWidth: cb.pageWidth,
+              pageHeight: cb.pageHeight
+            };
+          }
+        } else {
+          const sameLine = Math.abs(cb.baselineY - curWord.baselineY) <= 3.0;
+          const gap = cb.x0 - curWord.x1;
+          const spaceThreshold = cb.fontSize * 0.24;
+
+          if (sameLine && !isSpace && gap <= spaceThreshold) {
+            curWord.text += cb.char;
+            curWord.x1 = Math.max(curWord.x1, cb.x1);
+            curWord.fontSize = Math.max(curWord.fontSize, cb.fontSize);
+          } else {
+            words.push(finalizeWord(curWord));
+            curWord = isSpace ? null : {
+              text: cb.char,
+              x0: cb.x0,
+              x1: cb.x1,
+              baselineY: cb.baselineY,
+              fontSize: cb.fontSize,
+              descender: cb.descender,
+              ascender: cb.ascender,
+              pageWidth: cb.pageWidth,
+              pageHeight: cb.pageHeight
+            };
+          }
+        }
+      }
+      if (curWord) words.push(finalizeWord(curWord));
+      return words;
+    }
+
+    function finalizeWord(w) {
+      return {
+        text: w.text,
+        x0: w.x0,
+        x1: w.x1,
+        width: w.x1 - w.x0,
+        height: w.ascender + w.descender,
+        baselineY: w.baselineY,
+        fontSize: w.fontSize,
+        descender: w.descender,
+        ascender: w.ascender,
+        pageWidth: w.pageWidth,
+        pageHeight: w.pageHeight,
+        pdfRect: {
+          x0: w.x0,
+          y0: w.baselineY - w.descender,
+          x1: w.x1,
+          y1: w.baselineY + w.ascender
+        },
+        isEligible: false,
+        isSelected: false,
+        status: "INITIALIZED",
+        pngBytes: null
+      };
+    }
+
+    // ============================================================
+    // PIPELINE EXECUTION
     // ============================================================
     startBtn.addEventListener('click', async () => {
       if (!rawPdfBytes) return;
@@ -1182,67 +1302,26 @@
           log(`Randomly picked ${targetPages.length} pages for processing: [${targetPages.join(', ')}]`, "info");
         }
 
-        setProgress(12, "Extracting text positions & geometry across all pages...");
+        setProgress(12, "Reassembling unbroken text tokens across document...");
         const candidates = [];
 
-        // Extract tokens across ALL pages so DOCX can reconstruct the entire document
         for (let pNum = 1; pNum <= totalDocPages; pNum++) {
           const page = await pdfDocInstance.getPage(pNum);
           const viewport = page.getViewport({ scale: 1.0 });
           const textContent = await page.getTextContent();
-          pageWordsMap[pNum] = [];
+          
+          // Reassemble full words, preventing single-letter chopping
+          const words = reassembleWordsFromPage(textContent.items, viewport);
+          pageWordsMap[pNum] = words;
 
-          let wordIdx = 0;
-          for (let i = 0; i < textContent.items.length; i++) {
-            const item = textContent.items[i];
-            const str = item.str ? item.str.trim() : "";
-            if (!str) continue;
+          let wIdx = 0;
+          for (const w of words) {
+            w.uid = `p${pNum}_w${wIdx++}`;
+            w.pageNumber = pNum;
 
-            const words = str.split(/\s+/);
-            const totalChars = str.length;
-            const avgCharWidth = totalChars > 0 ? item.width / totalChars : 0;
-            const fontHeight = Math.hypot(item.transform[2], item.transform[3]) || item.height || Math.abs(item.transform[0]);
-
-            let charOffset = 0;
-            for (const w of words) {
-              const wordText = w.trim();
-              if (!wordText) continue;
-
-              const wordWidth = wordText.length * avgCharWidth;
-              const wordX = item.transform[4] + (charOffset * avgCharWidth);
-              const wordY = item.transform[5];
-
-              const descender = fontHeight * 0.22;
-              const ascender = fontHeight * 0.88;
-
-              const candidate = {
-                uid: `p${pNum}_w${wordIdx++}`,
-                pageNumber: pNum,
-                text: wordText,
-                pageWidth: viewport.width,
-                pageHeight: viewport.height,
-                pdfRect: { 
-                  x0: wordX, 
-                  y0: wordY - descender, 
-                  x1: wordX + wordWidth, 
-                  y1: wordY + ascender 
-                },
-                baselineY: wordY,
-                fontSize: fontHeight,
-                width: wordWidth,
-                height: ascender + descender,
-                isEligible: false,
-                isSelected: false,
-                status: "INITIALIZED",
-                pngBytes: null
-              };
-
-              if (targetPages.includes(pNum)) {
-                filterCandidate(candidate, config);
-                candidates.push(candidate);
-              }
-              pageWordsMap[pNum].push(candidate);
-              charOffset += wordText.length + 1;
+            if (targetPages.includes(pNum)) {
+              filterCandidate(w, config);
+              candidates.push(w);
             }
           }
           if (pNum % 5 === 0) await new Promise(r => setTimeout(r, 0));
@@ -1291,7 +1370,7 @@
 
         const selectedList = candidates.filter(c => c.isSelected);
         statConverted.textContent = selectedList.length;
-        log(`Selected ${selectedList.length} words for visual rasterization.`);
+        log(`Confirmed ${selectedList.length} whole words for image transformation.`);
 
         if (config.dryRun) {
           log("[DRY RUN] Simulation complete. No files created.", "warn");
@@ -1302,8 +1381,8 @@
           return;
         }
 
-        // 4. Sub-pixel Cropping of Words for Both PDF and Word
-        setProgress(45, "Generating lossless word-level raster slices...");
+        // Sub-pixel slice cropping
+        setProgress(45, "Generating sub-pixel raster slices for words...");
         const scale = config.targetDpi / 72.0;
         const pagesWithConversions = new Set(selectedList.map(c => c.pageNumber));
         const renderedCanvases = {};
@@ -1318,13 +1397,16 @@
           await page.render({ canvasContext: ctx, viewport }).promise;
           renderedCanvases[pNum] = canvas;
 
-          // Crop each selected word from the high-res canvas
           const pageSelectedWords = (pageWordsMap[pNum] || []).filter(w => w.isSelected);
           for (const word of pageSelectedWords) {
-            const cX = Math.max(0, Math.floor(word.pdfRect.x0 * scale));
-            const cY = Math.max(0, Math.floor((word.pageHeight - word.pdfRect.y1) * scale));
-            const cW = Math.min(canvas.width - cX, Math.ceil(word.width * scale));
-            const cH = Math.min(canvas.height - cY, Math.ceil(word.height * scale));
+            // Generous padding prevents clipping the edges of letters
+            const padX = Math.max(1.0, word.fontSize * 0.08);
+            const padY = Math.max(0.5, word.fontSize * 0.05);
+
+            const cX = Math.max(0, Math.floor((word.x0 - padX) * scale));
+            const cY = Math.max(0, Math.floor((word.pageHeight - word.pdfRect.y1 - padY) * scale));
+            const cW = Math.min(canvas.width - cX, Math.ceil((word.width + 2 * padX) * scale));
+            const cH = Math.min(canvas.height - cY, Math.ceil((word.height + 2 * padY) * scale));
 
             if (cW <= 0 || cH <= 0) continue;
 
@@ -1335,11 +1417,13 @@
 
             const blob = await new Promise(res => cropCanvas.toBlob(res, 'image/png'));
             word.pngBytes = new Uint8Array(await blob.arrayBuffer());
+            word.imgWidthPt = cW / scale;
+            word.imgHeightPt = cH / scale;
             word.status = "CONVERTED";
           }
         }
 
-        // 5. Generate Target PDF Output
+        // 1. Build Target Non-Selectable PDF Output
         setProgress(65, "Building non-selectable PDF output...");
         const srcDoc = await PDFLib.PDFDocument.load(rawPdfBytes.slice());
         const outPdfDoc = await PDFLib.PDFDocument.create();
@@ -1360,14 +1444,14 @@
             const newPage = outPdfDoc.addPage([pWidth, pHeight]);
             newPage.drawImage(bgImage, { x: 0, y: 0, width: pWidth, height: pHeight });
 
-            // Selective OCR Layer: stamp text ONLY for non-converted words
+            // Selective Text Layer: Non-converted words get invisible selectable text
             for (const word of (pageWordsMap[pNum] || [])) {
               if (!word.isSelected) {
                 try {
                   const sanitized = sanitizeForWinAnsi(word.text);
                   if (sanitized.trim().length > 0) {
                     newPage.drawText(sanitized, {
-                      x: word.pdfRect.x0,
+                      x: word.x0,
                       y: word.baselineY,
                       size: word.fontSize,
                       font: helvetica,
@@ -1381,13 +1465,13 @@
         }
         convertedPdfBytes = await outPdfDoc.save();
 
-        // 6. Generate True Word Document (.docx) Output
-        setProgress(82, "Synthesizing native flow Word (.docx) document...");
-        generatedDocxBlob = await generateNativeWordDocx(pageWordsMap, totalDocPages);
+        // 2. Build High-Fidelity Word (.docx) Output
+        setProgress(82, "Synthesizing natural-flow Word (.docx) document...");
+        generatedDocxBlob = await generateNaturalWordDocx(pageWordsMap, totalDocPages);
 
         buildReport(config, candidates);
         setProgress(100, "Done!");
-        log("Conversion pipeline finished! PDF and Word (.docx) are ready for download.", "success");
+        log("Conversion pipeline finished! Both PDF and Word (.docx) are ready for download.", "success");
         downloadStrip.style.display = 'flex';
 
         previewPageNumber = targetPages[0] || 1;
@@ -1402,14 +1486,13 @@
     });
 
     // ============================================================
-    // WORD (.DOCX) OPENXML GENERATOR
-    // Reconstructs native lines & paragraphs without page rasterization
+    // WORD (.DOCX) NATURAL-FLOW ENGINE
+    // Groups words into semantic paragraphs with baseline alignment
     // ============================================================
-    async function generateNativeWordDocx(wordsByPage, numPages) {
+    async function generateNaturalWordDocx(wordsByPage, numPages) {
       const zip = new JSZip();
       let imageCounter = 1;
       const imageRelationships = [];
-
       let documentBodyXml = "";
 
       for (let pNum = 1; pNum <= numPages; pNum++) {
@@ -1421,86 +1504,102 @@
         const pWidthTwips = Math.round(pWidth * 20);
         const pHeightTwips = Math.round(pHeight * 20);
 
-        // Group words into lines using Y-tolerance
-        const sortedWords = [...words].sort((a, b) => (b.pdfRect.y1 - a.pdfRect.y1));
+        // Group into lines by baseline Y
+        const sortedWords = [...words].sort((a, b) => b.baselineY - a.baselineY);
         const lines = [];
 
         for (const w of sortedWords) {
-          const topY = pHeight - w.pdfRect.y1;
           let placed = false;
           for (const line of lines) {
-            if (Math.abs(line.topY - topY) <= 3.5) {
+            if (Math.abs(line.baselineY - w.baselineY) <= 3.2) {
               line.words.push(w);
-              line.topY = Math.min(line.topY, topY);
-              line.bottomY = Math.max(line.bottomY, pHeight - w.pdfRect.y0);
-              line.height = Math.max(line.height, w.height);
+              line.baselineY = (line.baselineY + w.baselineY) / 2;
               placed = true;
               break;
             }
           }
           if (!placed) {
             lines.push({
-              topY: topY,
-              bottomY: pHeight - w.pdfRect.y0,
-              height: w.height,
+              baselineY: w.baselineY,
               words: [w]
             });
           }
         }
 
-        // Sort lines top-to-bottom
-        lines.sort((a, b) => a.topY - b.topY);
-
-        let prevLineBottom = 0;
+        // Sort lines top to bottom
+        lines.sort((a, b) => b.baselineY - a.baselineY);
 
         for (const line of lines) {
-          line.words.sort((a, b) => a.pdfRect.x0 - b.pdfRect.x0);
+          line.words.sort((a, b) => a.x0 - b.x0);
+          line.x0 = line.words[0].x0;
+          line.x1 = line.words[line.words.length - 1].x1;
+          line.fontSize = Math.max(...line.words.map(w => w.fontSize || 10));
+        }
 
-          const firstWord = line.words[0];
-          const leftIndentTwips = Math.round(firstWord.pdfRect.x0 * 20);
-          const spacingBeforeTwips = Math.max(0, Math.min(1400, Math.round((line.topY - prevLineBottom) * 20)));
-          prevLineBottom = line.bottomY;
+        // Group lines into natural flowing paragraphs
+        const paragraphs = [];
+        let curPara = null;
 
-          // Check if line needs tab stops for column alignment (tables, metadata, headers)
-          const tabStops = [];
-          for (let i = 1; i < line.words.length; i++) {
-            const gap = line.words[i].pdfRect.x0 - line.words[i - 1].pdfRect.x1;
-            if (gap > 12) {
-              tabStops.push(Math.round(line.words[i].pdfRect.x0 * 20));
+        for (let lIdx = 0; lIdx < lines.length; lIdx++) {
+          const line = lines[lIdx];
+          const prevLine = lIdx > 0 ? lines[lIdx - 1] : null;
+
+          const isCentered = Math.abs((line.x0 + line.x1) / 2 - (pWidth / 2)) < 24.0 && (line.x1 - line.x0) < (pWidth * 0.7);
+          const lineGap = prevLine ? (prevLine.baselineY - line.baselineY) : 0;
+          const isLargeGap = lineGap > (line.fontSize * 1.8);
+          const isFirstLineIndent = prevLine && (line.x0 - prevLine.x0 > 18.0);
+
+          if (!curPara || isCentered || isLargeGap || isFirstLineIndent) {
+            if (curPara) paragraphs.push(curPara);
+            curPara = {
+              isCentered,
+              x0: line.x0,
+              fontSize: line.fontSize,
+              words: [...line.words]
+            };
+          } else {
+            // Check for hyphenation at end of previous line
+            const lastWord = curPara.words[curPara.words.length - 1];
+            if (lastWord && lastWord.text.endsWith('-')) {
+              lastWord.text = lastWord.text.slice(0, -1); // merge hyphen
             }
+            curPara.words.push(...line.words);
           }
+        }
+        if (curPara) paragraphs.push(curPara);
 
-          let tabXml = "";
-          if (tabStops.length) {
-            tabXml = `<w:tabs>${tabStops.map(pos => `<w:tab w:val="left" w:pos="${pos}"/>`).join('')}</w:tabs>`;
+        // Convert paragraphs to OpenXML
+        for (const p of paragraphs) {
+          let pPr = `<w:pPr>`;
+          if (p.isCentered) {
+            pPr += `<w:jc w:val="center"/>`;
+          } else {
+            const leftIndentTwips = Math.max(0, Math.round((p.x0 - 72.0) * 20));
+            pPr += `<w:ind w:left="${leftIndentTwips}"/>`;
           }
+          pPr += `<w:spacing w:before="60" w:after="120" w:line="260" w:lineRule="auto"/></w:pPr>`;
 
           let runsXml = "";
-          for (let i = 0; i < line.words.length; i++) {
-            const w = line.words[i];
-
-            // Tab jump if significant gap exists
-            if (i > 0) {
-              const gap = w.pdfRect.x0 - line.words[i - 1].pdfRect.x1;
-              if (gap > 12) {
-                runsXml += `<w:r><w:tab/></w:r>`;
-              }
-            }
+          for (let i = 0; i < p.words.length; i++) {
+            const w = p.words[i];
 
             if (w.status === "CONVERTED" && w.pngBytes) {
-              // Word is converted to an image: insert inline DrawingML run
               const imgFileName = `image${imageCounter}.png`;
               const relId = `rIdImg${imageCounter}`;
               zip.file(`word/media/${imgFileName}`, w.pngBytes);
-
               imageRelationships.push({ id: relId, target: `media/${imgFileName}` });
               imageCounter++;
 
-              const cx = Math.round(w.width * 12700);
-              const cy = Math.round(w.height * 12700);
+              const cx = Math.round((w.imgWidthPt || w.width) * 12700);
+              const cy = Math.round((w.imgHeightPt || w.height) * 12700);
+              const baselineShiftHalfPts = Math.round(w.descender * 2.0);
 
+              // w:position shifts the run down to sit flat on the text baseline
               runsXml += `
                 <w:r>
+                  <w:rPr>
+                    <w:position w:val="-${baselineShiftHalfPts}"/>
+                  </w:rPr>
                   <w:drawing>
                     <wp:inline distT="0" distB="0" distL="0" distR="0">
                       <wp:extent cx="${cx}" cy="${cy}"/>
@@ -1509,7 +1608,7 @@
                         <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
                           <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
                             <pic:nvPicPr>
-                              <pic:cNvPr id="${imageCounter}" name="Picture ${imageCounter}"/>
+                              <pic:cNvPr id="${imageCounter}" name="Pic${imageCounter}"/>
                               <pic:cNvPicPr/>
                             </pic:nvPicPr>
                             <pic:blipFill>
@@ -1527,8 +1626,7 @@
                   </w:drawing>
                 </w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>`;
             } else {
-              // Word is regular native text: preserve clean typography
-              const halfPtSize = Math.max(12, Math.round((w.fontSize || 10) * 2));
+              const halfPtSize = Math.max(16, Math.round((w.fontSize || 11) * 2));
               runsXml += `
                 <w:r>
                   <w:rPr>
@@ -1540,31 +1638,20 @@
             }
           }
 
-          documentBodyXml += `
-            <w:p>
-              <w:pPr>
-                <w:ind w:left="${leftIndentTwips}"/>
-                <w:spacing w:before="${spacingBeforeTwips}" w:after="0" w:line="${Math.round(line.height * 20)}" w:lineRule="auto"/>
-                ${tabXml}
-              </w:pPr>
-              ${runsXml}
-            </w:p>`;
+          documentBodyXml += `<w:p>${pPr}${runsXml}</w:p>`;
         }
 
-        // Page break between pages
         if (pNum < numPages) {
           documentBodyXml += `<w:p><w:r><w:br w:type="page"/></w:r></w:p>`;
         } else {
-          // Final section properties for exact page size & 0-margin coordinate mapping
           documentBodyXml += `
             <w:sectPr>
               <w:pgSz w:w="${pWidthTwips}" w:h="${pHeightTwips}"/>
-              <w:pgMar w:top="0" w:right="0" w:bottom="0" w:left="0" w:header="0" w:footer="0" w:gutter="0"/>
+              <w:pgMar w:top="1440" w:bottom="1440" w:left="1440" w:right="1440" w:header="720" w:footer="720"/>
             </w:sectPr>`;
         }
       }
 
-      // 1. [Content_Types].xml
       zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
           <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -1575,13 +1662,11 @@
           <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
         </Types>`);
 
-      // 2. _rels/.rels
       zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
           <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
         </Relationships>`);
 
-      // 3. word/_rels/document.xml.rels
       const relsXml = imageRelationships.map(r => 
         `<Relationship Id="${r.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${r.target}"/>`
       ).join('');
@@ -1591,7 +1676,6 @@
           ${relsXml}
         </Relationships>`);
 
-      // 4. word/document.xml
       zip.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
                     xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -1665,9 +1749,6 @@
       }
     }
 
-    // ============================================================
-    // 2 PROMINENT DOWNLOAD HANDLERS
-    // ============================================================
     downloadPdfBtn.addEventListener('click', () => {
       if (!convertedPdfBytes) return;
       const blob = new Blob([convertedPdfBytes], { type: 'application/pdf' });
