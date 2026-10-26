@@ -10,9 +10,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   
-  <!-- PDF Engine Libraries with CDN Fallbacks -->
+  <!-- PDF & DOCX Engine Libraries (CDNs) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
     if (typeof PDFLib === 'undefined') {
       document.write('<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"><\/script>');
@@ -32,6 +33,9 @@
       --primary-glow: rgba(99, 102, 241, 0.25);
       --success: #10b981;
       --success-glow: rgba(16, 185, 129, 0.2);
+      --word-blue: #2563eb;
+      --word-blue-hover: #1d4ed8;
+      --word-glow: rgba(37, 99, 235, 0.25);
 
       --text: #f8fafc;
       --text-secondary: #94a3b8;
@@ -460,6 +464,16 @@
       background: #059669;
     }
 
+    .btn-word {
+      background: var(--word-blue);
+      color: #fff;
+      box-shadow: 0 4px 14px var(--word-glow);
+    }
+
+    .btn-word:hover:not(:disabled) {
+      background: var(--word-blue-hover);
+    }
+
     .btn-subtle {
       background: var(--surface-elevated);
       border: 1px solid var(--border);
@@ -542,14 +556,27 @@
       color: var(--text);
     }
 
+    /* Dual Main Download Strip */
     .download-strip {
       display: none;
       flex-direction: column;
-      gap: 10px;
-      background: rgba(16, 185, 129, 0.08);
-      border: 1px solid rgba(16, 185, 129, 0.25);
+      gap: 12px;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.25);
       border-radius: var(--radius-md);
-      padding: 16px;
+      padding: 18px;
+    }
+
+    .download-primary-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 600px) {
+      .download-primary-actions {
+        grid-template-columns: 1fr;
+      }
     }
 
     .download-grid {
@@ -665,7 +692,7 @@
       </div>
       <div>
         <h1 class="brand-title">PDF Text-to-Image Converter</h1>
-        <p class="brand-subtitle">True text-stripping rasterizer with selective OCR layer</p>
+        <p class="brand-subtitle">Dual-Export Engine: Non-selectable PDF + True Flow Word (.docx)</p>
       </div>
     </div>
     <div class="badge-status">Engine Ready</div>
@@ -844,12 +871,18 @@
         </div>
       </div>
 
-      <!-- Completed Download Hub -->
+      <!-- Completed 2-Button Download Hub -->
       <div class="download-strip" id="downloadStrip">
-        <button class="btn-primary btn-success" id="downloadPdfBtn">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download Converted PDF
-        </button>
+        <div class="download-primary-actions">
+          <button class="btn-primary btn-success" id="downloadPdfBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download Converted PDF
+          </button>
+          <button class="btn-primary btn-word" id="downloadDocxBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+            Download as Word (.docx)
+          </button>
+        </div>
         <div class="download-grid">
           <button class="btn-subtle" id="downloadJsonBtn">Export JSON Audit</button>
           <button class="btn-subtle" id="downloadCsvBtn">Export CSV Audit</button>
@@ -887,20 +920,19 @@
   </div>
 
   <script>
-    // Worker initialization
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    // State Variables
     let rawPdfBytes = null;
     let convertedPdfBytes = null;
+    let generatedDocxBlob = null;
     let pdfDocInstance = null;
     let totalDocPages = 0;
     let currentFileName = "document.pdf";
     let auditReportData = null;
     let candidateRecords = [];
+    let pageWordsMap = {};
     let previewPageNumber = 1;
 
-    // DOM Elements
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const filePill = document.getElementById('filePill');
@@ -922,6 +954,7 @@
 
     const downloadStrip = document.getElementById('downloadStrip');
     const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+    const downloadDocxBtn = document.getElementById('downloadDocxBtn');
     const downloadJsonBtn = document.getElementById('downloadJsonBtn');
     const downloadCsvBtn = document.getElementById('downloadCsvBtn');
 
@@ -955,7 +988,6 @@
 
     async function ensurePDFLib() {
       if (typeof PDFLib !== 'undefined' && window.PDFLib) return true;
-      log("Loading backup CDN for PDFLib...", "warn");
       const backupCDNs = [
         "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js",
         "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"
@@ -985,6 +1017,15 @@
       };
     }
 
+    function escapeXml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    }
+
     function sanitizeForWinAnsi(str) {
       return str
         .replace(/[\u2018\u2019]/g, "'")
@@ -1009,6 +1050,7 @@
     clearFileBtn.addEventListener('click', () => {
       rawPdfBytes = null;
       convertedPdfBytes = null;
+      generatedDocxBlob = null;
       pdfDocInstance = null;
       filePill.style.display = 'none';
       dropZone.style.display = 'flex';
@@ -1084,7 +1126,7 @@
     }
 
     // ============================================================
-    // PIPELINE EXECUTION
+    // CONVERSION PIPELINE (PDF + WORD DOCX)
     // ============================================================
     startBtn.addEventListener('click', async () => {
       if (!rawPdfBytes) return;
@@ -1092,13 +1134,14 @@
       const libLoaded = await ensurePDFLib();
       if (!libLoaded) {
         log("Fatal: PDFLib could not be loaded.", "error");
-        alert("PDF-Lib engine failed to load. Please check your internet connection.");
+        alert("PDF-Lib engine failed to load. Check your internet connection.");
         return;
       }
 
       startBtn.disabled = true;
       downloadStrip.style.display = 'none';
       candidateRecords = [];
+      pageWordsMap = {};
 
       const config = {
         probability: parseFloat(probInput.value),
@@ -1120,7 +1163,6 @@
         log(`Initiating transformation with seed = ${config.seed}...`);
         setProgress(5, "Resolving target pages...");
 
-        // 1. Identify Target Pages
         const startP = Math.max(1, config.startPage);
         const endP = Math.min(totalDocPages, config.endPage);
         let eligiblePages = [];
@@ -1137,20 +1179,18 @@
             [pool[i], pool[j]] = [pool[j], pool[i]];
           }
           targetPages = pool.slice(0, sampleSize).sort((a, b) => a - b);
-          log(`Randomly picked ${targetPages.length} pages: [${targetPages.join(', ')}]`, "info");
+          log(`Randomly picked ${targetPages.length} pages for processing: [${targetPages.join(', ')}]`, "info");
         }
 
-        // 2. Token Extraction
-        setProgress(15, `Extracting text tokens...`);
+        setProgress(12, "Extracting text positions & geometry across all pages...");
         const candidates = [];
-        const wordsByPage = {};
 
-        for (let pIdx = 0; pIdx < targetPages.length; pIdx++) {
-          const pageNum = targetPages[pIdx];
-          const page = await pdfDocInstance.getPage(pageNum);
+        // Extract tokens across ALL pages so DOCX can reconstruct the entire document
+        for (let pNum = 1; pNum <= totalDocPages; pNum++) {
+          const page = await pdfDocInstance.getPage(pNum);
           const viewport = page.getViewport({ scale: 1.0 });
           const textContent = await page.getTextContent();
-          wordsByPage[pageNum] = [];
+          pageWordsMap[pNum] = [];
 
           let wordIdx = 0;
           for (let i = 0; i < textContent.items.length; i++) {
@@ -1176,9 +1216,10 @@
               const ascender = fontHeight * 0.88;
 
               const candidate = {
-                uid: `p${pageNum}_w${wordIdx++}`,
-                pageNumber: pageNum,
+                uid: `p${pNum}_w${wordIdx++}`,
+                pageNumber: pNum,
                 text: wordText,
+                pageWidth: viewport.width,
                 pageHeight: viewport.height,
                 pdfRect: { 
                   x0: wordX, 
@@ -1192,16 +1233,19 @@
                 height: ascender + descender,
                 isEligible: false,
                 isSelected: false,
-                status: "INITIALIZED"
+                status: "INITIALIZED",
+                pngBytes: null
               };
 
-              filterCandidate(candidate, config);
-              candidates.push(candidate);
-              wordsByPage[pageNum].push(candidate);
+              if (targetPages.includes(pNum)) {
+                filterCandidate(candidate, config);
+                candidates.push(candidate);
+              }
+              pageWordsMap[pNum].push(candidate);
               charOffset += wordText.length + 1;
             }
           }
-          if (pIdx % 5 === 0) await new Promise(r => setTimeout(r, 0));
+          if (pNum % 5 === 0) await new Promise(r => setTimeout(r, 0));
         }
 
         candidateRecords = candidates;
@@ -1209,8 +1253,7 @@
         statScanned.textContent = candidates.length;
         statEligible.textContent = eligibleList.length;
 
-        // 3. Probabilistic Selection & Collision Resolution
-        setProgress(35, "Filtering & sampling...");
+        setProgress(30, "Evaluating selection & overlap policies...");
         const selectRng = createSeededRandom(config.seed);
         const byPage = {};
         eligibleList.forEach(c => {
@@ -1248,10 +1291,10 @@
 
         const selectedList = candidates.filter(c => c.isSelected);
         statConverted.textContent = selectedList.length;
-        log(`Confirmed ${selectedList.length} words for text-to-image conversion.`);
+        log(`Selected ${selectedList.length} words for visual rasterization.`);
 
         if (config.dryRun) {
-          log("[DRY RUN] Finished without modifying PDF.", "warn");
+          log("[DRY RUN] Simulation complete. No files created.", "warn");
           setProgress(100, "Simulation complete.");
           buildReport(config, candidates);
           downloadStrip.style.display = 'flex';
@@ -1259,60 +1302,67 @@
           return;
         }
 
-        // 4. True Text-Stripping Pipeline
-        // Build a brand-new PDF:
-        // - Unaltered pages are copied as original vector
-        // - Converted pages are rasterized to high-res background, and only UNCONVERTED words get an invisible selectable text layer
-        setProgress(50, "Synthesizing non-selectable image layers...");
-        const srcDoc = await PDFLib.PDFDocument.load(rawPdfBytes.slice());
-        const outDoc = await PDFLib.PDFDocument.create();
-        const helvetica = await outDoc.embedFont(PDFLib.StandardFonts.Helvetica);
-
-        const pagesWithConversions = new Set(selectedList.map(c => c.pageNumber));
+        // 4. Sub-pixel Cropping of Words for Both PDF and Word
+        setProgress(45, "Generating lossless word-level raster slices...");
         const scale = config.targetDpi / 72.0;
+        const pagesWithConversions = new Set(selectedList.map(c => c.pageNumber));
+        const renderedCanvases = {};
+
+        for (const pNum of pagesWithConversions) {
+          const page = await pdfDocInstance.getPage(pNum);
+          const viewport = page.getViewport({ scale: scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          renderedCanvases[pNum] = canvas;
+
+          // Crop each selected word from the high-res canvas
+          const pageSelectedWords = (pageWordsMap[pNum] || []).filter(w => w.isSelected);
+          for (const word of pageSelectedWords) {
+            const cX = Math.max(0, Math.floor(word.pdfRect.x0 * scale));
+            const cY = Math.max(0, Math.floor((word.pageHeight - word.pdfRect.y1) * scale));
+            const cW = Math.min(canvas.width - cX, Math.ceil(word.width * scale));
+            const cH = Math.min(canvas.height - cY, Math.ceil(word.height * scale));
+
+            if (cW <= 0 || cH <= 0) continue;
+
+            const cropCanvas = document.createElement('canvas');
+            cropCanvas.width = cW;
+            cropCanvas.height = cH;
+            cropCanvas.getContext('2d').drawImage(canvas, cX, cY, cW, cH, 0, 0, cW, cH);
+
+            const blob = await new Promise(res => cropCanvas.toBlob(res, 'image/png'));
+            word.pngBytes = new Uint8Array(await blob.arrayBuffer());
+            word.status = "CONVERTED";
+          }
+        }
+
+        // 5. Generate Target PDF Output
+        setProgress(65, "Building non-selectable PDF output...");
+        const srcDoc = await PDFLib.PDFDocument.load(rawPdfBytes.slice());
+        const outPdfDoc = await PDFLib.PDFDocument.create();
+        const helvetica = await outPdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
 
         for (let pNum = 1; pNum <= totalDocPages; pNum++) {
           if (!pagesWithConversions.has(pNum)) {
-            // Unmodified page: copy directly from source (fast, 100% vector)
-            const [copiedPage] = await outDoc.copyPages(srcDoc, [pNum - 1]);
-            outDoc.addPage(copiedPage);
+            const [copiedPage] = await outPdfDoc.copyPages(srcDoc, [pNum - 1]);
+            outPdfDoc.addPage(copiedPage);
           } else {
-            // Page HAS words converted to images:
-            // Step 4a: Render page to high-res canvas at target DPI
-            const page = await pdfDocInstance.getPage(pNum);
-            const viewport = page.getViewport({ scale: scale });
-            const pWidth = viewport.width / scale;
-            const pHeight = viewport.height / scale;
+            const canvas = renderedCanvases[pNum];
+            const pWidth = canvas.width / scale;
+            const pHeight = canvas.height / scale;
 
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.floor(viewport.width);
-            canvas.height = Math.floor(viewport.height);
-            const ctx = canvas.getContext('2d');
-            await page.render({ canvasContext: ctx, viewport }).promise;
-
-            // Step 4b: Compress canvas to JPEG image (lossless-equivalent 95% quality, fast)
             const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.95));
-            const imgBytes = await blob.arrayBuffer();
-            const bgImage = await outDoc.embedJpg(imgBytes);
+            const bgImage = await outPdfDoc.embedJpg(await blob.arrayBuffer());
 
-            // Step 4c: Add a brand new page with the image as background
-            const newPage = outDoc.addPage([pWidth, pHeight]);
-            newPage.drawImage(bgImage, {
-              x: 0,
-              y: 0,
-              width: pWidth,
-              height: pHeight
-            });
+            const newPage = outPdfDoc.addPage([pWidth, pHeight]);
+            newPage.drawImage(bgImage, { x: 0, y: 0, width: pWidth, height: pHeight });
 
-            // Step 4d: Selective Text Layer:
-            // Stamping invisible text ONLY for UNCONVERTED words.
-            // Converted words get NO text stamped, meaning they are strictly non-selectable!
-            const pageWords = wordsByPage[pNum] || [];
-            for (const word of pageWords) {
-              if (word.isSelected) {
-                word.status = "CONVERTED"; // Pure image, no text operator exists!
-              } else {
-                // Keep unconverted words selectable
+            // Selective OCR Layer: stamp text ONLY for non-converted words
+            for (const word of (pageWordsMap[pNum] || [])) {
+              if (!word.isSelected) {
                 try {
                   const sanitized = sanitizeForWinAnsi(word.text);
                   if (sanitized.trim().length > 0) {
@@ -1321,27 +1371,23 @@
                       y: word.baselineY,
                       size: word.fontSize,
                       font: helvetica,
-                      opacity: 0 // Invisible OCR layer for unconverted words
+                      opacity: 0
                     });
                   }
-                } catch (e) {
-                  // Ignore glyph encoding mismatches
-                }
+                } catch (e) {}
               }
             }
           }
-
-          setProgress(50 + Math.round((pNum / totalDocPages) * 45), `Processed Page ${pNum}/${totalDocPages}...`);
-          if (pNum % 3 === 0) await new Promise(r => setTimeout(r, 5));
         }
+        convertedPdfBytes = await outPdfDoc.save();
 
-        // 5. Finalize
-        setProgress(98, "Publishing output PDF...");
-        convertedPdfBytes = await outDoc.save();
+        // 6. Generate True Word Document (.docx) Output
+        setProgress(82, "Synthesizing native flow Word (.docx) document...");
+        generatedDocxBlob = await generateNativeWordDocx(pageWordsMap, totalDocPages);
+
         buildReport(config, candidates);
-
-        setProgress(100, "Completed");
-        log("Conversion pipeline finished! Converted words are now pure images.", "success");
+        setProgress(100, "Done!");
+        log("Conversion pipeline finished! PDF and Word (.docx) are ready for download.", "success");
         downloadStrip.style.display = 'flex';
 
         previewPageNumber = targetPages[0] || 1;
@@ -1354,6 +1400,211 @@
         startBtn.disabled = false;
       }
     });
+
+    // ============================================================
+    // WORD (.DOCX) OPENXML GENERATOR
+    // Reconstructs native lines & paragraphs without page rasterization
+    // ============================================================
+    async function generateNativeWordDocx(wordsByPage, numPages) {
+      const zip = new JSZip();
+      let imageCounter = 1;
+      const imageRelationships = [];
+
+      let documentBodyXml = "";
+
+      for (let pNum = 1; pNum <= numPages; pNum++) {
+        const words = wordsByPage[pNum] || [];
+        if (!words.length) continue;
+
+        const pWidth = words[0].pageWidth;
+        const pHeight = words[0].pageHeight;
+        const pWidthTwips = Math.round(pWidth * 20);
+        const pHeightTwips = Math.round(pHeight * 20);
+
+        // Group words into lines using Y-tolerance
+        const sortedWords = [...words].sort((a, b) => (b.pdfRect.y1 - a.pdfRect.y1));
+        const lines = [];
+
+        for (const w of sortedWords) {
+          const topY = pHeight - w.pdfRect.y1;
+          let placed = false;
+          for (const line of lines) {
+            if (Math.abs(line.topY - topY) <= 3.5) {
+              line.words.push(w);
+              line.topY = Math.min(line.topY, topY);
+              line.bottomY = Math.max(line.bottomY, pHeight - w.pdfRect.y0);
+              line.height = Math.max(line.height, w.height);
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) {
+            lines.push({
+              topY: topY,
+              bottomY: pHeight - w.pdfRect.y0,
+              height: w.height,
+              words: [w]
+            });
+          }
+        }
+
+        // Sort lines top-to-bottom
+        lines.sort((a, b) => a.topY - b.topY);
+
+        let prevLineBottom = 0;
+
+        for (const line of lines) {
+          line.words.sort((a, b) => a.pdfRect.x0 - b.pdfRect.x0);
+
+          const firstWord = line.words[0];
+          const leftIndentTwips = Math.round(firstWord.pdfRect.x0 * 20);
+          const spacingBeforeTwips = Math.max(0, Math.min(1400, Math.round((line.topY - prevLineBottom) * 20)));
+          prevLineBottom = line.bottomY;
+
+          // Check if line needs tab stops for column alignment (tables, metadata, headers)
+          const tabStops = [];
+          for (let i = 1; i < line.words.length; i++) {
+            const gap = line.words[i].pdfRect.x0 - line.words[i - 1].pdfRect.x1;
+            if (gap > 12) {
+              tabStops.push(Math.round(line.words[i].pdfRect.x0 * 20));
+            }
+          }
+
+          let tabXml = "";
+          if (tabStops.length) {
+            tabXml = `<w:tabs>${tabStops.map(pos => `<w:tab w:val="left" w:pos="${pos}"/>`).join('')}</w:tabs>`;
+          }
+
+          let runsXml = "";
+          for (let i = 0; i < line.words.length; i++) {
+            const w = line.words[i];
+
+            // Tab jump if significant gap exists
+            if (i > 0) {
+              const gap = w.pdfRect.x0 - line.words[i - 1].pdfRect.x1;
+              if (gap > 12) {
+                runsXml += `<w:r><w:tab/></w:r>`;
+              }
+            }
+
+            if (w.status === "CONVERTED" && w.pngBytes) {
+              // Word is converted to an image: insert inline DrawingML run
+              const imgFileName = `image${imageCounter}.png`;
+              const relId = `rIdImg${imageCounter}`;
+              zip.file(`word/media/${imgFileName}`, w.pngBytes);
+
+              imageRelationships.push({ id: relId, target: `media/${imgFileName}` });
+              imageCounter++;
+
+              const cx = Math.round(w.width * 12700);
+              const cy = Math.round(w.height * 12700);
+
+              runsXml += `
+                <w:r>
+                  <w:drawing>
+                    <wp:inline distT="0" distB="0" distL="0" distR="0">
+                      <wp:extent cx="${cx}" cy="${cy}"/>
+                      <wp:docPr id="${imageCounter}" name="WordImg${imageCounter}"/>
+                      <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                        <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                          <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                            <pic:nvPicPr>
+                              <pic:cNvPr id="${imageCounter}" name="Picture ${imageCounter}"/>
+                              <pic:cNvPicPr/>
+                            </pic:nvPicPr>
+                            <pic:blipFill>
+                              <a:blip r:embed="${relId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+                              <a:stretch><a:fillRect/></a:stretch>
+                            </pic:blipFill>
+                            <pic:spPr>
+                              <a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>
+                              <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                            </pic:spPr>
+                          </pic:pic>
+                        </a:graphicData>
+                      </a:graphic>
+                    </wp:inline>
+                  </w:drawing>
+                </w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>`;
+            } else {
+              // Word is regular native text: preserve clean typography
+              const halfPtSize = Math.max(12, Math.round((w.fontSize || 10) * 2));
+              runsXml += `
+                <w:r>
+                  <w:rPr>
+                    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>
+                    <w:sz w:val="${halfPtSize}"/>
+                  </w:rPr>
+                  <w:t xml:space="preserve">${escapeXml(w.text)} </w:t>
+                </w:r>`;
+            }
+          }
+
+          documentBodyXml += `
+            <w:p>
+              <w:pPr>
+                <w:ind w:left="${leftIndentTwips}"/>
+                <w:spacing w:before="${spacingBeforeTwips}" w:after="0" w:line="${Math.round(line.height * 20)}" w:lineRule="auto"/>
+                ${tabXml}
+              </w:pPr>
+              ${runsXml}
+            </w:p>`;
+        }
+
+        // Page break between pages
+        if (pNum < numPages) {
+          documentBodyXml += `<w:p><w:r><w:br w:type="page"/></w:r></w:p>`;
+        } else {
+          // Final section properties for exact page size & 0-margin coordinate mapping
+          documentBodyXml += `
+            <w:sectPr>
+              <w:pgSz w:w="${pWidthTwips}" w:h="${pHeightTwips}"/>
+              <w:pgMar w:top="0" w:right="0" w:bottom="0" w:left="0" w:header="0" w:footer="0" w:gutter="0"/>
+            </w:sectPr>`;
+        }
+      }
+
+      // 1. [Content_Types].xml
+      zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+          <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+          <Default Extension="xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+          <Default Extension="png" ContentType="image/png"/>
+          <Default Extension="jpeg" ContentType="image/jpeg"/>
+          <Default Extension="jpg" ContentType="image/jpeg"/>
+          <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+        </Types>`);
+
+      // 2. _rels/.rels
+      zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+        </Relationships>`);
+
+      // 3. word/_rels/document.xml.rels
+      const relsXml = imageRelationships.map(r => 
+        `<Relationship Id="${r.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${r.target}"/>`
+      ).join('');
+
+      zip.file("word/_rels/document.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          ${relsXml}
+        </Relationships>`);
+
+      // 4. word/document.xml
+      zip.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                    xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                    xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                    xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+          <w:body>
+            ${documentBodyXml}
+          </w:body>
+        </w:document>`);
+
+      return await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    }
 
     function filterCandidate(c, config) {
       const t = c.text;
@@ -1414,6 +1665,9 @@
       }
     }
 
+    // ============================================================
+    // 2 PROMINENT DOWNLOAD HANDLERS
+    // ============================================================
     downloadPdfBtn.addEventListener('click', () => {
       if (!convertedPdfBytes) return;
       const blob = new Blob([convertedPdfBytes], { type: 'application/pdf' });
@@ -1421,6 +1675,16 @@
       const a = document.createElement('a');
       a.href = url;
       a.download = currentFileName.replace(/\.pdf$/i, '') + "_converted.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    downloadDocxBtn.addEventListener('click', () => {
+      if (!generatedDocxBlob) return;
+      const url = URL.createObjectURL(generatedDocxBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = currentFileName.replace(/\.pdf$/i, '') + "_converted.docx";
       a.click();
       URL.revokeObjectURL(url);
     });
